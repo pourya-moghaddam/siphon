@@ -1,0 +1,8 @@
+/target
+*.part
+*.siphon.part
+*.db
+*.db-wal
+*.db-shm
+*.sock
+test_run/

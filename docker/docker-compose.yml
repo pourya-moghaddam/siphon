@@ -1,0 +1,19 @@
+services:
+  siphond:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: siphond
+    restart: unless-stopped
+    ports:
+      - "9898:9898"
+    volumes:
+      - ./data:/data
+      - ./downloads:/downloads
+    environment:
+      - RUST_LOG=info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9898"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

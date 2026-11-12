@@ -1,0 +1,22 @@
+[Unit]
+Description=Siphon Background Download Manager Daemon
+Documentation=https://github.com/user/siphon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/siphond
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=%h/.local/share/siphon %h/Downloads %t
+
+# Environment
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=default.target
