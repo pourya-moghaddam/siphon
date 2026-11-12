@@ -48,6 +48,13 @@ pub enum ModalState {
         file_name: String,
         delete_disk_file: bool,
     },
+    ConfigureQueue {
+        name_input: String,
+        concurrency_input: String,
+        start_time_input: String,
+        stop_time_input: String,
+        focused_field: usize,
+    },
     Help,
 }
 
@@ -319,6 +326,66 @@ impl App {
                     self.set_status(format!("Delete error: {}", err));
                 }
                 _ => {}
+            }
+        }
+        self.close_modal();
+        self.refresh_data().await?;
+        Ok(())
+    }
+
+    pub fn open_queue_modal(&mut self) {
+        self.modal = ModalState::ConfigureQueue {
+            name_input: "night".to_string(),
+            concurrency_input: "3".to_string(),
+            start_time_input: "02:00".to_string(),
+            stop_time_input: "07:00".to_string(),
+            focused_field: 0,
+        };
+    }
+
+    pub async fn submit_queue_modal(&mut self) -> Result<()> {
+        if let ModalState::ConfigureQueue {
+            ref name_input,
+            ref concurrency_input,
+            ref start_time_input,
+            ref stop_time_input,
+            ..
+        } = self.modal
+        {
+            let name = name_input.trim();
+            if !name.is_empty() {
+                let concurrency = concurrency_input.trim().parse::<usize>().unwrap_or(3);
+                let _ = self
+                    .client
+                    .send_request(&Request::CreateQueue {
+                        name: name.to_string(),
+                        max_concurrent: concurrency,
+                        speed_limit: None,
+                    })
+                    .await;
+
+                let start = if start_time_input.trim().is_empty() {
+                    None
+                } else {
+                    Some(start_time_input.trim().to_string())
+                };
+                let stop = if stop_time_input.trim().is_empty() {
+                    None
+                } else {
+                    Some(stop_time_input.trim().to_string())
+                };
+
+                let _ = self
+                    .client
+                    .send_request(&Request::ConfigureSchedule {
+                        queue_name: name.to_string(),
+                        start_time: start,
+                        stop_time: stop,
+                        on_complete: siphon_core::models::OnCompleteAction::None,
+                    })
+                    .await;
+
+                self.set_status(format!("Configured queue '{}'", name));
             }
         }
         self.close_modal();

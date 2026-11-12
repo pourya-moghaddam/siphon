@@ -50,6 +50,11 @@ impl Scheduler {
                         self.queue_mgr.notify_tick();
                     }
                 }
+            } else if !queue.is_active {
+                info!("Scheduler: Queue '{}' without schedule resumed to active", queue.name);
+                queue.is_active = true;
+                let _ = self.db.upsert_queue(&queue);
+                self.queue_mgr.notify_tick();
             }
         }
     }
