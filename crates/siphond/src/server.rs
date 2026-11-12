@@ -209,16 +209,27 @@ impl Server {
                     max_concurrent,
                     speed_limit,
                 } => {
-                    let q = Queue {
-                        name,
-                        max_concurrent,
-                        speed_limit_bps: speed_limit,
-                        is_active: true,
-                        schedule_start: None,
-                        schedule_end: None,
-                    };
+                    let mut q = db
+                        .list_queues()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .find(|q| q.name == name)
+                        .unwrap_or_else(|| Queue {
+                            name: name.clone(),
+                            max_concurrent: 3,
+                            speed_limit_bps: None,
+                            is_active: true,
+                            schedule_start: None,
+                            schedule_end: None,
+                        });
+                    q.max_concurrent = max_concurrent;
+                    q.speed_limit_bps = speed_limit;
+
                     match db.upsert_queue(&q) {
-                        Ok(_) => Response::Ok,
+                        Ok(_) => {
+                            queue_mgr.notify_tick();
+                            Response::Ok
+                        }
                         Err(e) => Response::Error(e.to_string()),
                     }
                 }
@@ -229,14 +240,32 @@ impl Server {
                     stop_time,
                     on_complete: _,
                 } => {
-                    let existing = db.list_queues().unwrap_or_default();
-                    if let Some(mut q) = existing.into_iter().find(|q| q.name == queue_name) {
-                        q.schedule_start = start_time;
-                        q.schedule_end = stop_time;
-                        let _ = db.upsert_queue(&q);
-                        Response::Ok
-                    } else {
-                        Response::Error("Queue not found".to_string())
+                    let mut q = db
+                        .list_queues()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .find(|q| q.name == queue_name)
+                        .unwrap_or_else(|| Queue {
+                            name: queue_name.clone(),
+                            max_concurrent: 3,
+                            speed_limit_bps: None,
+                            is_active: true,
+                            schedule_start: None,
+                            schedule_end: None,
+                        });
+
+                    q.schedule_start = start_time;
+                    q.schedule_end = stop_time;
+                    if q.schedule_start.is_none() && q.schedule_end.is_none() {
+                        q.is_active = true;
+                    }
+
+                    match db.upsert_queue(&q) {
+                        Ok(_) => {
+                            queue_mgr.notify_tick();
+                            Response::Ok
+                        }
+                        Err(e) => Response::Error(e.to_string()),
                     }
                 }
 

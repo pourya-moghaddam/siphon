@@ -62,6 +62,7 @@ siphon
 | `a` | Add a new download URL (popup dialog) |
 | `p` / `Space` | Pause or resume selected download |
 | `r` | Refresh expired download link (input new URL to resume) |
+| `c` | Configure or create download queue & schedule dialog |
 | `d` | Delete selected task (optionally delete file with `f`) |
 | `j` / `Down` | Move selection down |
 | `k` / `Up` | Move selection up |
@@ -146,11 +147,14 @@ siphon resume 8a4f10c2
 # Refresh an expired download link
 siphon refresh 8a4f10c2 "https://example.com/new-signed-link?token=xyz"
 
-# Delete a task and remove file from disk
-siphon delete 8a4f10c2 --file
-
 # Check daemon status
 siphon status
+
+# Manage Queues & Schedules
+siphon queue list
+siphon queue create night --concurrency 5
+siphon queue schedule night --start 02:00 --stop 07:00
+siphon queue schedule night --clear
 ```
 
 ---

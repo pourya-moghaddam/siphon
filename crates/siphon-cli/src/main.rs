@@ -88,6 +88,50 @@ enum Commands {
 
     /// Get daemon status
     Status,
+
+    /// Manage download queues and schedules
+    Queue {
+        #[command(subcommand)]
+        command: QueueCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum QueueCommands {
+    /// List all configured queues
+    List,
+
+    /// Create or update a queue
+    Create {
+        /// Queue name (e.g. "night", "work", "slow")
+        name: String,
+
+        /// Maximum concurrent downloads (default: 3)
+        #[arg(short, long, default_value_t = 3)]
+        concurrency: usize,
+
+        /// Speed limit in bytes per second (optional)
+        #[arg(short, long)]
+        speed: Option<u64>,
+    },
+
+    /// Configure start and stop times for a queue (e.g. off-peak overnight hours)
+    Schedule {
+        /// Queue name
+        name: String,
+
+        /// Start time in 24-hour format (e.g. "02:00")
+        #[arg(short, long)]
+        start: Option<String>,
+
+        /// Stop time in 24-hour format (e.g. "07:00")
+        #[arg(short, long)]
+        stop: Option<String>,
+
+        /// Clear schedule (run 24/7)
+        #[arg(long)]
+        clear: bool,
+    },
 }
 
 #[tokio::main]
@@ -110,6 +154,7 @@ async fn main() -> Result<()> {
         Some(Commands::Delete { id, file }) => handle_delete(client, id, file).await,
         Some(Commands::Refresh { id, new_url }) => handle_refresh(client, id, new_url).await,
         Some(Commands::Status) => handle_status(client).await,
+        Some(Commands::Queue { command }) => handle_queue(client, command).await,
     }
 }
 
@@ -248,6 +293,91 @@ async fn handle_status(client: IpcClient) -> Result<()> {
     Ok(())
 }
 
+async fn handle_queue(client: IpcClient, cmd: QueueCommands) -> Result<()> {
+    match cmd {
+        QueueCommands::List => {
+            let resp = client.send_request(&Request::ListQueues).await?;
+            if let Response::Queues(queues) = resp {
+                println!(
+                    "{:<15} {:<15} {:<15} {:<20} {:<10}",
+                    "Queue Name", "Concurrency", "Speed Limit", "Schedule Window", "Status"
+                );
+                println!("{}", "-".repeat(75));
+                for q in queues {
+                    let sched_str = match (&q.schedule_start, &q.schedule_end) {
+                        (Some(s), Some(e)) => format!("{} - {}", s, e),
+                        _ => "None (24/7)".to_string(),
+                    };
+                    let speed_str = q
+                        .speed_limit_bps
+                        .map(|b| format!("{}/s", format_bytes(b)))
+                        .unwrap_or_else(|| "Unlimited".to_string());
+                    println!(
+                        "{:<15} {:<15} {:<15} {:<20} {:<10}",
+                        q.name,
+                        q.max_concurrent,
+                        speed_str,
+                        sched_str,
+                        if q.is_active { "Active" } else { "Paused" }
+                    );
+                }
+            }
+        }
+        QueueCommands::Create {
+            name,
+            concurrency,
+            speed,
+        } => {
+            let resp = client
+                .send_request(&Request::CreateQueue {
+                    name: name.clone(),
+                    max_concurrent: concurrency,
+                    speed_limit: speed,
+                })
+                .await?;
+            match resp {
+                Response::Ok => println!("✔ Queue '{}' created/updated (max concurrent: {})", name, concurrency),
+                Response::Error(e) => eprintln!("✘ Error: {}", e),
+                _ => {}
+            }
+        }
+        QueueCommands::Schedule {
+            name,
+            start,
+            stop,
+            clear,
+        } => {
+            let (start_time, stop_time) = if clear {
+                (None, None)
+            } else {
+                (start, stop)
+            };
+
+            let resp = client
+                .send_request(&Request::ConfigureSchedule {
+                    queue_name: name.clone(),
+                    start_time: start_time.clone(),
+                    stop_time: stop_time.clone(),
+                    on_complete: siphon_core::models::OnCompleteAction::None,
+                })
+                .await?;
+
+            match resp {
+                Response::Ok => {
+                    if let (Some(s), Some(e)) = (start_time, stop_time) {
+                        println!("✔ Queue '{}' scheduled for {} - {} daily", name, s, e);
+                    } else {
+                        println!("✔ Queue '{}' schedule cleared (will run 24/7)", name);
+                    }
+                }
+                Response::Error(e) => eprintln!("✘ Error: {}", e),
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn run_tui(client: IpcClient) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -382,6 +512,44 @@ async fn handle_key_event(app: &mut App, code: KeyCode, modifiers: KeyModifiers)
             _ => {}
         },
 
+        ModalState::ConfigureQueue {
+            ref mut name_input,
+            ref mut concurrency_input,
+            ref mut start_time_input,
+            ref mut stop_time_input,
+            ref mut focused_field,
+        } => match code {
+            KeyCode::Esc => app.close_modal(),
+            KeyCode::Tab => {
+                *focused_field = (*focused_field + 1) % 4;
+            }
+            KeyCode::BackTab => {
+                *focused_field = if *focused_field == 0 { 3 } else { *focused_field - 1 };
+            }
+            KeyCode::Enter => {
+                app.submit_queue_modal().await?;
+            }
+            KeyCode::Backspace => {
+                let target = match *focused_field {
+                    0 => name_input,
+                    1 => concurrency_input,
+                    2 => start_time_input,
+                    _ => stop_time_input,
+                };
+                target.pop();
+            }
+            KeyCode::Char(c) => {
+                let target = match *focused_field {
+                    0 => name_input,
+                    1 => concurrency_input,
+                    2 => start_time_input,
+                    _ => stop_time_input,
+                };
+                target.push(c);
+            }
+            _ => {}
+        },
+
         ModalState::Help => {
             if code == KeyCode::Esc || code == KeyCode::Char('q') || code == KeyCode::Enter {
                 app.close_modal();
@@ -417,6 +585,9 @@ async fn handle_key_event(app: &mut App, code: KeyCode, modifiers: KeyModifiers)
 
                 KeyCode::Char('a') => {
                     app.open_add_modal();
+                }
+                KeyCode::Char('c') => {
+                    app.open_queue_modal();
                 }
                 KeyCode::Char('r') => {
                     app.open_refresh_modal();

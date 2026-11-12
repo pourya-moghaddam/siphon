@@ -35,6 +35,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         ModalState::AddDownload { .. } => render_add_modal(f, app, size),
         ModalState::RefreshLink { .. } => render_refresh_modal(f, app, size),
         ModalState::ConfirmDelete { .. } => render_delete_modal(f, app, size),
+        ModalState::ConfigureQueue { .. } => render_queue_modal(f, app, size),
         ModalState::Help => render_help_modal(f, size),
     }
 }
@@ -364,24 +365,115 @@ fn render_footer(f: &mut Frame, app: &App, area: Rect) {
             Span::styled(msg, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         ])
     } else {
-        Line::from(vec![
-            Span::styled("[a] ", Style::default().fg(Color::Cyan)),
-            Span::raw("Add  "),
-            Span::styled("[Space] ", Style::default().fg(Color::Cyan)),
-            Span::raw("Pause/Resume  "),
-            Span::styled("[r] ", Style::default().fg(Color::Cyan)),
-            Span::raw("Refresh Link  "),
-            Span::styled("[d] ", Style::default().fg(Color::Cyan)),
-            Span::raw("Delete  "),
-            Span::styled("[q] ", Style::default().fg(Color::Cyan)),
-            Span::raw("Detach TUI  "),
-            Span::styled("[?] ", Style::default().fg(Color::Cyan)),
-            Span::raw("Help"),
-        ])
+        match app.current_tab {
+            Tab::Queues => Line::from(vec![
+                Span::styled("[c] ", Style::default().fg(Color::Cyan)),
+                Span::raw("Create/Config Queue  "),
+                Span::styled("[Tab] ", Style::default().fg(Color::Cyan)),
+                Span::raw("Tabs  "),
+                Span::styled("[q] ", Style::default().fg(Color::Cyan)),
+                Span::raw("Detach TUI  "),
+                Span::styled("[?] ", Style::default().fg(Color::Cyan)),
+                Span::raw("Help"),
+            ]),
+            _ => Line::from(vec![
+                Span::styled("[a] ", Style::default().fg(Color::Cyan)),
+                Span::raw("Add  "),
+                Span::styled("[Space] ", Style::default().fg(Color::Cyan)),
+                Span::raw("Pause/Resume  "),
+                Span::styled("[r] ", Style::default().fg(Color::Cyan)),
+                Span::raw("Refresh Link  "),
+                Span::styled("[c] ", Style::default().fg(Color::Cyan)),
+                Span::raw("Queue Config  "),
+                Span::styled("[d] ", Style::default().fg(Color::Cyan)),
+                Span::raw("Delete  "),
+                Span::styled("[q] ", Style::default().fg(Color::Cyan)),
+                Span::raw("Detach TUI  "),
+                Span::styled("[?] ", Style::default().fg(Color::Cyan)),
+                Span::raw("Help"),
+            ]),
+        }
     };
 
     let p = Paragraph::new(content).style(Style::default().bg(Color::Rgb(20, 20, 30)));
     f.render_widget(p, area);
+}
+
+fn render_queue_modal(f: &mut Frame, app: &App, area: Rect) {
+    if let ModalState::ConfigureQueue {
+        ref name_input,
+        ref concurrency_input,
+        ref start_time_input,
+        ref stop_time_input,
+        focused_field,
+    } = app.modal
+    {
+        let modal_area = centered_rect(65, 55, area);
+        f.render_widget(Clear, modal_area);
+
+        let block = Block::default()
+            .title(" Configure Download Queue & Schedule ")
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .style(Style::default().bg(Color::Rgb(15, 20, 30)));
+
+        let inner = block.inner(modal_area);
+        f.render_widget(block, modal_area);
+
+        let fields = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Queue Name
+                Constraint::Length(3), // Concurrency
+                Constraint::Length(3), // Start Time
+                Constraint::Length(3), // Stop Time
+                Constraint::Length(2), // Help
+            ])
+            .split(inner);
+
+        let name_style = if focused_field == 0 {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let name_widget = Paragraph::new(name_input.as_str())
+            .block(Block::default().title(" Queue Name (e.g. night, default, slow) ").borders(Borders::ALL).border_style(name_style));
+        f.render_widget(name_widget, fields[0]);
+
+        let conc_style = if focused_field == 1 {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let conc_widget = Paragraph::new(concurrency_input.as_str())
+            .block(Block::default().title(" Max Concurrent Downloads (default: 3) ").borders(Borders::ALL).border_style(conc_style));
+        f.render_widget(conc_widget, fields[1]);
+
+        let start_style = if focused_field == 2 {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let start_widget = Paragraph::new(if start_time_input.is_empty() { "<None - Run 24/7>" } else { start_time_input.as_str() })
+            .style(if start_time_input.is_empty() { Style::default().fg(Color::DarkGray) } else { Style::default() })
+            .block(Block::default().title(" Schedule Start Time [HH:MM] (optional, e.g. 02:00) ").borders(Borders::ALL).border_style(start_style));
+        f.render_widget(start_widget, fields[2]);
+
+        let stop_style = if focused_field == 3 {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let stop_widget = Paragraph::new(if stop_time_input.is_empty() { "<None - Run 24/7>" } else { stop_time_input.as_str() })
+            .style(if stop_time_input.is_empty() { Style::default().fg(Color::DarkGray) } else { Style::default() })
+            .block(Block::default().title(" Schedule Stop Time [HH:MM] (optional, e.g. 07:00) ").borders(Borders::ALL).border_style(stop_style));
+        f.render_widget(stop_widget, fields[3]);
+
+        let help = Paragraph::new(" [Tab] Next field  |  [Enter] Save Queue  |  [Esc] Cancel ")
+            .style(Style::default().fg(Color::Yellow))
+            .alignment(Alignment::Center);
+        f.render_widget(help, fields[4]);
+    }
 }
 
 fn render_add_modal(f: &mut Frame, app: &App, area: Rect) {
